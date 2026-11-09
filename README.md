@@ -19,7 +19,7 @@ Screenshots in this guide use sample data from a test domain (contoso.local).
 
 - Lists the Windows Servers in Active Directory and detects which ones have Remote Desktop roles (Session Host, Gateway, Connection Broker, Licensing, Web Access).
 - Reads the RDS event logs on each ticked server in the background. A slow or offline server does not hold up the others or freeze the window.
-- Shows every event in one grid with columns for time, server, level, user, client address, session, target, event ID, log, provider and message.
+- Shows every event in one grid with columns for time, server, level, user, session, event ID, log, provider and message.
 - Highlights issues: errors, critical events and audit failures in bold red on a pink background, and warnings in red.
 - Writes everything to one CSV file that opens cleanly in Excel.
 - Filters and sorts the grid like an Excel table, with a filter button on every column.
@@ -56,10 +56,10 @@ The Servers panel on the left loads every enabled Windows Server from Active Dir
 | Control | What it does |
 |---|---|
 | Reload from AD | Reads the server list from Active Directory again. |
-| Detect RDS roles | Asks each listed server which Remote Desktop roles it has, fills in the RDS roles column and ticks the servers that have one. |
+| Detect RDS roles | Asks each listed server which Remote Desktop roles it has, shows the result in the Status column (for example "RDS: Session Host" or "No RDS roles") and ticks the servers that have one. |
 | All / None | Ticks or unticks every server in the list. |
 | RDS only | Ticks only the servers with a detected RDS role. |
-| Filter box (left) | Narrows the list by name, role, operating system or OU. |
+| Filter box (left) | Narrows the list by server name, detected role, operating system or OU. |
 | Add box (right) | Adds a server by name, for one that is not in Active Directory. Press Enter or click Add. |
 
 Your ticked servers, detected roles, CSV path and options are saved and restored next time.
@@ -137,13 +137,13 @@ Client-side Remote Desktop logs are skipped. So are Analytic and Debug logs, whi
 | Level | INFO, WARNING, ERROR, CRITICAL, AUDIT-OK, AUDITFAIL, or MONITOR for the app's own messages |
 | Issue | Yes or No |
 | User | The user the event is about, taken from the event data (for example `CONTOSO\jbloggs`) |
-| ClientAddress | The client IP address, with the client computer name in brackets when the event records it |
 | SessionId | The Remote Desktop session ID |
-| Target | For RD Gateway and Connection Broker events, the server the user was connecting to |
 | EventId | The Windows event ID |
 | Log | The event log, shortened (for example `TS-Gateway/Operational`) |
 | Provider | The source that wrote the event |
-| Message | The full event message on one line, with line breaks shown as a vertical bar (\|) |
+| Message | The full event message on one line, with line breaks shown as a vertical bar (\|). Where Windows records them, the client IP address and the server a user connected to through RD Gateway appear here. |
+
+If you start logging to an existing CSV that has different columns, for example one written by an older version, the app leaves that file alone and saves to a new file with the time added to its name. A blue message in the grid shows the new file name.
 
 The file is UTF-8 with a header row. The app adds to an existing file instead of overwriting it. Values that Excel would treat as a formula, such as a username starting with `=`, are prefixed with an apostrophe so they display as plain text.
 
@@ -184,13 +184,13 @@ The account running the app is not an administrator on that server and is not in
 
 The machine cannot contact a domain controller, for example because it is off the domain network. Add servers by name with the Add box instead.
 
-### RDS roles shows "unknown"
+### Status shows "Role check failed"
 
-The server did not answer over WinRM or DCOM. Hover over the cell to see the error. You can still tick the server and monitor it; role detection only helps you choose.
+The server did not answer over WinRM or DCOM when you clicked Detect RDS roles. Hover over the status to see the error. You can still tick the server and monitor it; role detection only helps you choose.
 
 ## Test one server from the command line
 
-`-Probe` connects to one server, lists the logs it would watch and shows the last hour of events with the user and client fields filled in. No window opens. Use it to confirm firewall and permissions before you start the app.
+`-Probe` connects to one server, lists the logs it would watch and shows the last hour of events with the user field filled in. No window opens. Use it to confirm firewall and permissions before you start the app.
 
 ```powershell
 .\RDSLogMonitor.ps1 -Probe RDSH01.contoso.local

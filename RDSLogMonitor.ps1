@@ -10,7 +10,7 @@
       2. Start Logging opens a background reader for each ticked server. Each reader watches that
          server's RDS event logs remotely and sends new events back.
       3. All events go into one grid and one CSV file with columns for Time, Server, Level, Issue,
-         User, Client address, Session, Target, Event ID, Log, Provider and Message.
+         User, Session, Event ID, Log, Provider and Message.
          Errors, critical events and audit failures show in bold red. Warnings show in red too
          unless you untick "Warnings are issues".
 
@@ -30,7 +30,7 @@
 
 .PARAMETER Probe
     Console test: connect to one server, list the logs it would watch, and show the last hour of
-    events with the parsed User/Client fields. No window opens.
+    events with the parsed User field. No window opens.
 
 .EXAMPLE
     .\RDSLogMonitor.ps1
@@ -105,7 +105,7 @@ function Get-SourceXPath($Source) {
     return "*[System[$cond]]"
 }
 
-# Pulls User / Client / Session / Target out of the event's data fields
+# Pulls User / Session out of the event's data fields
 function Get-EventFields($Ev) {
     if (-not $global:RdsMonSidCache) { $global:RdsMonSidCache = @{} }
     $d = @{}
@@ -126,10 +126,9 @@ function Get-EventFields($Ev) {
     $user = & $pick @('TargetUserName', 'AccountName', 'SubjectUserName', 'User', 'UserName', 'TargetUser')
     $dom  = ''
     if ($user -and $user -notmatch '[\\@]') { $dom = & $pick @('TargetDomainName', 'AccountDomain', 'SubjectDomainName', 'Domain', 'DomainName') }
-    $client = & $pick @('IpAddress', 'ClientAddress', 'ClientIP', 'ClientIPAddress', 'Address', 'CallingStationID')
 
     if ($Ev.Id -eq 1149 -and $d['Param1']) {      # RemoteConnectionManager: user authenticated
-        $user = $d['Param1']; $dom = $d['Param2']; $client = $d['Param3']
+        $user = $d['Param1']; $dom = $d['Param2']
     }
     if ($user -and $dom) { $user = "$dom\$user" }
 
@@ -141,15 +140,9 @@ function Get-EventFields($Ev) {
         }
         $user = $global:RdsMonSidCache[$sid]
     }
-    $clientName = & $pick @('ClientName', 'Workstation', 'WorkstationName')
-    if ($clientName -and $client -and $clientName -ne $client) { $client = "$client ($clientName)" }
-    elseif ($clientName -and -not $client) { $client = $clientName }
-
     @{
         User    = $user
-        Client  = $client
         Session = (& $pick @('SessionID', 'SessionId', 'Session', 'SessionName'))
-        Target  = (& $pick @('Resource', 'TargetServer', 'ServerName'))
     }
 }
 
@@ -184,9 +177,7 @@ function Convert-Event($Ev, $Source, [string]$Server) {
         Level    = $label
         Sev      = $sev
         User     = $f.User
-        Client   = $f.Client
         Session  = $f.Session
-        Target   = $f.Target
         EventId  = [int]$Ev.Id
         Log      = $Source.Short
         Provider = [string]$Ev.ProviderName
@@ -341,7 +332,7 @@ $script:Opt = @{
     HistoryMs       = [long]0
     PollMs          = 5000
 }
-$script:CsvColumns = 'Time', 'Server', 'Level', 'Issue', 'User', 'ClientAddress', 'SessionId', 'Target', 'EventId', 'Log', 'Provider', 'Message'
+$script:CsvColumns = 'Time', 'Server', 'Level', 'Issue', 'User', 'SessionId', 'EventId', 'Log', 'Provider', 'Message'
 
 # ==========================================================================================
 #  -Probe: console test against one server
@@ -359,7 +350,7 @@ if ($Probe) {
     $all = New-Object System.Collections.Generic.List[object]
     $probeOpt = $script:Opt.Clone(); $probeOpt.MaxPerPoll = 15
     foreach ($s in $sources) { $s.Initial = $true; $s.HistoryMs = 3600000; try { [void](Read-SourceEvents $session $s $all $probeOpt $Probe) } catch { } }
-    $all | Sort-Object Time | Format-Table Time, Level, User, Client, Session, Target, EventId, Log, @{ n = 'Message'; e = { $_.Message.Substring(0, [Math]::Min(70, $_.Message.Length)) } } -AutoSize
+    $all | Sort-Object Time | Format-Table Time, Level, User, Session, EventId, Log, @{ n = 'Message'; e = { $_.Message.Substring(0, [Math]::Min(70, $_.Message.Length)) } } -AutoSize
     return
 }
 
@@ -478,22 +469,24 @@ $gridSrv = New-Ctl DataGridView @{ Dock = 'Fill'; AllowUserToAddRows = $false; A
 $colMon = New-Object System.Windows.Forms.DataGridViewCheckBoxColumn
 $colMon.Name = 'Monitor'; $colMon.HeaderText = ''; $colMon.Width = 28
 [void]$gridSrv.Columns.Add($colMon)
-[void](Add-Col $gridSrv 'Server' 'Server' 170)
+[void](Add-Col $gridSrv 'Server' 'Server' 175)
 [void](Add-Col $gridSrv 'Roles' 'RDS roles' 120)
 [void](Add-Col $gridSrv 'Status' 'Status' 150)
-[void](Add-Col $gridSrv 'Events' 'Events' 55)
-[void](Add-Col $gridSrv 'Issues' 'Issues' 50)
+[void](Add-Col $gridSrv 'Events' 'Events' 50)
+[void](Add-Col $gridSrv 'Issues' 'Issues' 45)
 [void](Add-Col $gridSrv 'LastEvent' 'Last event' 120)
 [void](Add-Col $gridSrv 'OS' 'Operating system' 190)
 [void](Add-Col $gridSrv 'LastLogon' 'AD last logon' 90)
 [void](Add-Col $gridSrv 'OU' 'OU' 260)
+# kept as hidden data: used by role detection, RDS only, the filter box and saved settings
+foreach ($n in 'Roles', 'OS', 'LastLogon', 'OU') { $gridSrv.Columns[$n].Visible = $false }
 $split.Panel1.Controls.Add($gridSrv)
 $split.Panel1.Controls.Add($srvTools)
 
 # events grid, bound to a DataTable
 $script:Table = New-Object System.Data.DataTable 'Events'
-foreach ($c in @(@('Time', [datetime]), @('Server', [string]), @('Level', [string]), @('Issue', [string]), @('User', [string]), @('Client', [string]),
-                 @('Session', [string]), @('Target', [string]), @('EventId', [int]), @('Log', [string]), @('Provider', [string]), @('Message', [string]), @('Sev', [string]))) {
+foreach ($c in @(@('Time', [datetime]), @('Server', [string]), @('Level', [string]), @('Issue', [string]), @('User', [string]),
+                 @('Session', [string]), @('EventId', [int]), @('Log', [string]), @('Provider', [string]), @('Message', [string]), @('Sev', [string]))) {
     [void]$script:Table.Columns.Add($c[0], $c[1])
 }
 $script:Binding = New-Object System.Windows.Forms.BindingSource
@@ -507,9 +500,7 @@ Set-DoubleBuffered $gridEv
 [void](Add-Col $gridEv 'Server' 'Server' 120 'Server')
 [void](Add-Col $gridEv 'Level' 'Level' 75 'Level')
 [void](Add-Col $gridEv 'User' 'User' 150 'User')
-[void](Add-Col $gridEv 'Client' 'Client address' 120 'Client')
 [void](Add-Col $gridEv 'Session' 'Session' 75 'Session')
-[void](Add-Col $gridEv 'Target' 'Target' 110 'Target')
 [void](Add-Col $gridEv 'EventId' 'Event ID' 80 'EventId')
 [void](Add-Col $gridEv 'Log' 'Log' 210 'Log')
 [void](Add-Col $gridEv 'Provider' 'Provider' 140 'Provider')
@@ -625,6 +616,7 @@ function Start-RoleDetection {
     }
     foreach ($n in $names) {
         $script:ServerRows[$n.ToLowerInvariant()].Cells['Roles'].Value = 'checking...'
+        if (-not $script:Run) { Set-ServerStatus $n 'Checking RDS roles...' 'Info' }
         $ps = [PowerShell]::Create(); $ps.RunspacePool = $script:RolePool
         [void]$ps.AddScript($script:RoleCode).AddArgument($n).AddArgument($script:RoleQueue)
         $script:RoleJobs.Add([pscustomobject]@{ PS = $ps; Handle = $ps.BeginInvoke() })
@@ -672,8 +664,8 @@ function Save-CsvPending {
 # ==========================================================================================
 #  Events grid
 # ==========================================================================================
-function Add-GridRow($Time, $Server, $Level, $User, $Client, $Session, $Target, $EventId, $Log, $Provider, $Message, $Sev, $Issue) {
-    [void]$script:Table.Rows.Add([object[]]@($Time, $Server, $Level, $Issue, $User, $Client, $Session, $Target, $EventId, $Log, $Provider, $Message, $Sev))
+function Add-GridRow($Time, $Server, $Level, $User, $Session, $EventId, $Log, $Provider, $Message, $Sev, $Issue) {
+    [void]$script:Table.Rows.Add([object[]]@($Time, $Server, $Level, $Issue, $User, $Session, $EventId, $Log, $Provider, $Message, $Sev))
 }
 
 # Message from the monitor itself (connect/disconnect/errors): grid + CSV
@@ -681,9 +673,9 @@ function Write-Monitor([string]$Server, [string]$Text, [bool]$IsError = $false) 
     $now = Get-Date
     $sev = if ($IsError) { 'MonitorError' } else { 'Monitor' }
     $issue = if ($IsError) { 'Yes' } else { 'No' }
-    Add-CsvRow @($now, $Server, 'MONITOR', $issue, '', '', '', '', '', 'RDS Log Monitor', '', $Text)
+    Add-CsvRow @($now, $Server, 'MONITOR', $issue, '', '', '', 'RDS Log Monitor', '', $Text)
     $script:Binding.RaiseListChangedEvents = $true
-    Add-GridRow $now $Server 'MONITOR' '' '' '' '' ([DBNull]::Value) 'RDS Log Monitor' '' $Text $sev $issue
+    Add-GridRow $now $Server 'MONITOR' '' '' ([DBNull]::Value) 'RDS Log Monitor' '' $Text $sev $issue
     Complete-GridUpdate
 }
 
@@ -732,7 +724,7 @@ function Update-GridFilter {
     $parts = New-Object System.Collections.Generic.List[string]
     $f = $txtFind.Text.Trim()
     if ($f) {
-        $parts.Add(("(Server LIKE '*{0}*' OR User LIKE '*{0}*' OR Client LIKE '*{0}*' OR Level LIKE '*{0}*' OR Log LIKE '*{0}*' OR Provider LIKE '*{0}*' OR Message LIKE '*{0}*' OR Target LIKE '*{0}*' OR CONVERT(EventId, 'System.String') LIKE '*{0}*')" -f (ConvertTo-LikeText $f)))
+        $parts.Add(("(Server LIKE '*{0}*' OR User LIKE '*{0}*' OR Level LIKE '*{0}*' OR Log LIKE '*{0}*' OR Provider LIKE '*{0}*' OR Message LIKE '*{0}*' OR CONVERT(EventId, 'System.String') LIKE '*{0}*')" -f (ConvertTo-LikeText $f)))
     }
     foreach ($k in @($script:ColFilters.Keys)) { $parts.Add('(' + (Get-ColumnFilterExpr $k $script:ColFilters[$k]) + ')') }
     try { $script:Table.DefaultView.RowFilter = ($parts -join ' AND ') }
@@ -829,8 +821,8 @@ function Show-ColumnFilter([int]$ColIndex) {
 function Show-EventDetails {
     $r = $gridEv.CurrentRow; if (-not $r -or -not $r.DataBoundItem) { return }
     $d = $r.DataBoundItem.Row
-    $text = "Time:     {0:yyyy-MM-dd HH:mm:ss}`r`nServer:   {1}`r`nLevel:    {2}`r`nUser:     {3}`r`nClient:   {4}`r`nSession:  {5}`r`nTarget:   {6}`r`nEvent ID: {7}`r`nLog:      {8}`r`nProvider: {9}`r`n`r`n{10}" -f `
-        $d.Item('Time'), $d.Item('Server'), $d.Item('Level'), $d.Item('User'), $d.Item('Client'), $d.Item('Session'), $d.Item('Target'), $d.Item('EventId'), $d.Item('Log'), $d.Item('Provider'), ($d.Item('Message') -replace ' \| ', "`r`n")
+    $text = "Time:     {0:yyyy-MM-dd HH:mm:ss}`r`nServer:   {1}`r`nLevel:    {2}`r`nUser:     {3}`r`nSession:  {4}`r`nEvent ID: {5}`r`nLog:      {6}`r`nProvider: {7}`r`n`r`n{8}" -f `
+        $d.Item('Time'), $d.Item('Server'), $d.Item('Level'), $d.Item('User'), $d.Item('Session'), $d.Item('EventId'), $d.Item('Log'), $d.Item('Provider'), ($d.Item('Message') -replace ' \| ', "`r`n")
     $dlg = New-Ctl Form @{ Text = 'Event details'; Size = '760,520'; StartPosition = 'CenterParent'; Font = $fontUi }
     $tb = New-Ctl TextBox @{ Multiline = $true; ReadOnly = $true; Dock = 'Fill'; ScrollBars = 'Both'; Text = $text; Font = (New-Object System.Drawing.Font('Consolas', 9)); BackColor = [System.Drawing.Color]::White }
     $dlg.Controls.Add($tb); [void]$dlg.ShowDialog($form); $dlg.Dispose()
@@ -878,6 +870,18 @@ function Start-Monitoring {
     if ($servers.Count -eq 0) { [void][System.Windows.Forms.MessageBox]::Show('Tick at least one server to monitor.', 'RDS Log Monitor', 'OK', 'Warning'); return }
     $path = $txtFile.Text.Trim()
     if (-not $path) { [void][System.Windows.Forms.MessageBox]::Show('Choose a CSV file first.', 'RDS Log Monitor', 'OK', 'Warning'); return }
+    # An existing CSV with different columns (e.g. from an older version) gets a new file instead of mixed rows
+    $renamed = $null
+    try {
+        if ((Test-Path -LiteralPath $path) -and (Get-Item -LiteralPath $path).Length -gt 0) {
+            $header = (Get-Content -LiteralPath $path -TotalCount 1 -Encoding UTF8).TrimStart([char]0xFEFF)
+            if ($header -ne ($script:CsvColumns -join ',')) {
+                $renamed = $path
+                $path = Join-Path (Split-Path $path -Parent) ('{0}_{1:HHmmss}.csv' -f [IO.Path]::GetFileNameWithoutExtension($path), (Get-Date))
+                $txtFile.Text = $path
+            }
+        }
+    } catch { }
     try {
         $dir = Split-Path -Path $path -Parent
         if ($dir -and -not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
@@ -887,6 +891,7 @@ function Start-Monitoring {
         return
     }
     $script:CsvPath = $path
+    if ($renamed) { Write-Monitor '' "$renamed has different columns (from an older version), so this run is saved to $path instead." }
     Save-Settings
 
     $opt = $script:Opt.Clone()
@@ -945,8 +950,8 @@ function Receive-Queue {
                         if ($issuesOnly -and -not $isIssue) { continue }
                         $issue = if ($isIssue) { 'Yes' } else { 'No' }
                         $script:EventCount++; if ($isIssue) { $script:IssueCount++ }
-                        Add-CsvRow @($item.Time, $item.Server, $item.Level, $issue, $item.User, $item.Client, $item.Session, $item.Target, $item.EventId, $item.Log, $item.Provider, $item.Message)
-                        Add-GridRow $item.Time $item.Server $item.Level $item.User $item.Client $item.Session $item.Target $item.EventId $item.Log $item.Provider $item.Message $item.Sev $issue
+                        Add-CsvRow @($item.Time, $item.Server, $item.Level, $issue, $item.User, $item.Session, $item.EventId, $item.Log, $item.Provider, $item.Message)
+                        Add-GridRow $item.Time $item.Server $item.Level $item.User $item.Session $item.EventId $item.Log $item.Provider $item.Message $item.Sev $issue
                         $row = $script:ServerRows[$item.Server.ToLowerInvariant()]
                         if ($row) {
                             $row.Cells['Events'].Value = [int]$row.Cells['Events'].Value + 1
@@ -958,8 +963,8 @@ function Receive-Queue {
                     'Monitor' {
                         $sev = if ($item.IsError) { 'MonitorError' } else { 'Monitor' }
                         $issue = if ($item.IsError) { 'Yes' } else { 'No' }
-                        Add-CsvRow @($item.Time, $item.Server, 'MONITOR', $issue, '', '', '', '', '', 'RDS Log Monitor', '', $item.Message)
-                        Add-GridRow $item.Time $item.Server 'MONITOR' '' '' '' '' ([DBNull]::Value) 'RDS Log Monitor' '' $item.Message $sev $issue
+                        Add-CsvRow @($item.Time, $item.Server, 'MONITOR', $issue, '', '', '', 'RDS Log Monitor', '', $item.Message)
+                        Add-GridRow $item.Time $item.Server 'MONITOR' '' '' ([DBNull]::Value) 'RDS Log Monitor' '' $item.Message $sev $issue
                         $added++
                     }
                     'Status' { Set-ServerStatus $item.Server $item.Text $item.Kind }
@@ -974,12 +979,15 @@ function Receive-Queue {
     while ($script:RoleQueue.TryDequeue([ref]$item)) {
         $row = $script:ServerRows[$item.Server.ToLowerInvariant()]; if (-not $row) { continue }
         if ($item.Error) {
-            $row.Cells['Roles'].Value = 'unknown'; $row.Cells['Roles'].ToolTipText = $item.Error; $row.Cells['Roles'].Style.ForeColor = $clrGrey
+            $row.Cells['Roles'].Value = 'unknown'
+            if (-not $script:Run) { Set-ServerStatus $item.Server 'Role check failed' 'Info'; $row.Cells['Status'].ToolTipText = $item.Error }
         } elseif ($item.Roles) {
-            $row.Cells['Roles'].Value = $item.Roles; $row.Cells['Roles'].Style.ForeColor = $clrGreen
+            $row.Cells['Roles'].Value = $item.Roles
+            if (-not $script:Run) { Set-ServerStatus $item.Server "RDS: $($item.Roles)" 'Ok' }
             if (-not $script:Run) { $row.Cells['Monitor'].Value = $true }
         } else {
-            $row.Cells['Roles'].Value = 'none'; $row.Cells['Roles'].Style.ForeColor = $clrGrey
+            $row.Cells['Roles'].Value = 'none'
+            if (-not $script:Run) { Set-ServerStatus $item.Server 'No RDS roles' 'Info' }
         }
     }
 }
