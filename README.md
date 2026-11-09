@@ -1,5 +1,12 @@
 # RDS Log Monitor
 
+> [!WARNING]
+> **This app was written by AI (Claude) for my own personal use.**
+> It has not been professionally reviewed or audited. You're free to use, copy and modify it,
+> but **entirely at your own risk**. It comes with no warranty and no support, and I accept no
+> responsibility for any data loss, security issues or other problems that result from using it.
+> Released under the [MIT License](LICENSE).
+
 RDS Log Monitor watches the Remote Desktop Services (RDS) event logs on every RDS server in a domain from one place. You run it on a domain controller or management server. It finds the servers in Active Directory, reads their logs over the network, and writes every event to one grid and one CSV file. Errors and failed logons are highlighted in red so they stand out.
 
 It is a single PowerShell script with a Windows Forms interface. There is nothing to install on the RDS servers.
